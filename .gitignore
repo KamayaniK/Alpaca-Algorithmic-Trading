@@ -12,3 +12,15 @@ venv/
 .env
 .env.*
 !.env.example
+# Generated market data and local backups
+*_daily_ohlcv.csv
+*_daily_ohlcv_100.csv
+*_daily_ohlcv_100_before_refresh.csv
+alpaca_historical_data_check.csv
+alpaca_tradability_check.csv
+
+# Local experiment reports (we will select reports explicitly)
+reports/
+
+# Local virtual environments and editor settings
+.vscode/

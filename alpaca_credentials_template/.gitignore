@@ -1,0 +1,3 @@
+# Keep local API credentials private
+alpaca_credentials.py
+.env
