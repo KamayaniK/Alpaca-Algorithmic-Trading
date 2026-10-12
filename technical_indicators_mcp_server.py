@@ -159,15 +159,67 @@ def fetch_daily_bars(
     return results
 
 
-def analyze_frame(ticker: str, frame: pd.DataFrame) -> dict:
-    """Calculate indicators and return the most recent indicator row."""
+def fetch_spy_bars(days: int = 150) -> pd.DataFrame:
+    """Fetch SPY benchmark bars without adding SPY to the allowed stock universe."""
+    if not 1 <= days <= 220:
+        raise ValueError("days must be between 1 and 220.")
+
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+
+    request = StockBarsRequest(
+        symbol_or_symbols=["SPY"],
+        timeframe=TimeFrame.Day,
+        start=start,
+        end=end,
+        limit=10000,
+        feed="iex",
+    )
+
+    response = data_client.get_stock_bars(request)
+    bars = response.df
+
+    if bars.empty:
+        raise ValueError("No SPY benchmark bars returned by Alpaca.")
+
+    if isinstance(bars.index, pd.MultiIndex):
+        if "SPY" not in bars.index.get_level_values("symbol"):
+            raise ValueError("SPY was missing from Alpaca's response.")
+        frame = bars.xs("SPY", level="symbol").copy()
+    else:
+        frame = bars.copy()
+
+    frame = frame.reset_index()
+    frame.columns = [str(column).strip().lower() for column in frame.columns]
+
+    required = ["timestamp", "open", "high", "low", "close", "volume"]
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError(f"SPY benchmark data is missing columns: {missing}")
+
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+    frame = frame.dropna(subset=["timestamp"])
+    frame = frame.sort_values("timestamp").reset_index(drop=True)
+
+    if frame.empty:
+        raise ValueError("SPY benchmark data contains no valid timestamps.")
+
+    return frame
+
+
+def analyze_frame(
+    ticker: str,
+    frame: pd.DataFrame,
+    spy_frame: pd.DataFrame | None = None,
+) -> dict:
+    """Calculate indicators, including SPY-relative strength when available."""
     if frame.empty:
         return {
             "ticker": ticker,
             "error": "No market data returned for this ticker.",
         }
 
-    indicators = calculate_indicators(frame)
+    indicators = calculate_indicators(frame, spy_df=spy_frame)
 
     if indicators.empty:
         return {
@@ -182,7 +234,6 @@ def analyze_frame(ticker: str, frame: pd.DataFrame) -> dict:
         "bars_used": len(indicators),
         "latest_indicators": json_safe(latest),
     }
-
 
 @mcp.tool()
 def get_account_summary() -> str:
@@ -256,7 +307,8 @@ def calculate_stock_indicators(ticker: str) -> str:
     try:
         ticker = validate_ticker(ticker)
         frames = fetch_daily_bars([ticker], days=150)
-        result = analyze_frame(ticker, frames[ticker])
+        spy_frame = fetch_spy_bars(days=150)
+        result = analyze_frame(ticker, frames[ticker], spy_frame=spy_frame)
 
         return json.dumps(result, allow_nan=False)
 
@@ -267,22 +319,26 @@ def calculate_stock_indicators(ticker: str) -> str:
         })
 
 
+
 @mcp.tool()
 def calculate_multiple_stock_indicators(
     tickers: list[str],
     days: int = 150,
 ) -> str:
     """
-    Fetch OHLCV for multiple stocks in one Alpaca request and calculate
-    each stock's indicators locally. No orders are submitted.
+    Fetch OHLCV for multiple stocks and calculate indicators locally.
+    No orders are submitted.
     """
     try:
         frames = fetch_daily_bars(tickers, days)
+        spy_frame = fetch_spy_bars(days)
         results = {}
 
         for ticker, frame in frames.items():
             try:
-                results[ticker] = analyze_frame(ticker, frame)
+                results[ticker] = analyze_frame(
+                    ticker, frame, spy_frame=spy_frame
+                )
             except Exception as exc:
                 results[ticker] = {
                     "ticker": ticker,
@@ -295,6 +351,7 @@ def calculate_multiple_stock_indicators(
         return json.dumps({
             "error": f"{type(exc).__name__}: {exc}"
         })
+
 
 
 @mcp.tool()

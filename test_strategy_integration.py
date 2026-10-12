@@ -35,17 +35,27 @@ def analyze_indicator_response(response_text: str) -> dict:
 
 
 class StrategyIntegrationTests(unittest.TestCase):
+
     def test_mcp_style_response_generates_buy_signal(self):
         response = json.dumps({
             "ticker": "AMD",
             "latest_indicators": {
-                "close": 110,
-                "EMA_20": 108,
-                "EMA_50": 104,
-                "RSI_14": 60,
+                "close": 110.0,
+                "EMA_20": 108.0,
+                "EMA_50": 104.0,
+                "RSI_14": 60.0,
                 "MACD": 2.0,
                 "MACD_Signal": 1.5,
+                "MACD_Histogram": 0.5,
                 "ATR_14": 2.0,
+                "RS_20D_vs_SPY": 0.05,
+                "ADX_14": 30.0,
+                "PLUS_DI_14": 35.0,
+                "MINUS_DI_14": 15.0,
+                "Volume_Ratio_5_20": 1.5,
+                "Price_Change_1D": 0.02,
+                "news_check_passed": True,
+                "severe_negative_news": False,
             },
         })
 
@@ -55,6 +65,9 @@ class StrategyIntegrationTests(unittest.TestCase):
         self.assertEqual(result["signal"], "BUY")
         self.assertIn("reason", result)
         self.assertIn("evidence", result)
+        self.assertIn("weighted_score", result["evidence"])
+        self.assertIn("component_scores", result["evidence"])
+
 
     def test_tool_error_fails_safe_to_hold(self):
         response = json.dumps({

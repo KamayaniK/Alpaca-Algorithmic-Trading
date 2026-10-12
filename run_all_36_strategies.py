@@ -87,7 +87,7 @@ def member_for(ticker):
 
 
 def analyze_payload(ticker, payload):
-    """Apply the existing strategy to one ticker's MCP response."""
+    """Apply indicators and a per-ticker news screen; never place orders."""
     if not isinstance(payload, dict):
         return failure_result(
             ticker, "MCP returned an unexpected result format."
@@ -99,18 +99,54 @@ def analyze_payload(ticker, payload):
         )
 
     indicators = payload.get("latest_indicators")
-
     if not isinstance(indicators, dict):
         return failure_result(
             ticker, "Response did not contain latest_indicators."
         )
 
+    # Fail closed: news errors or inconclusive results block BUY signals.
     try:
-        signal = generate_signal(indicators)
+        from news_screening import screen_news
+        news = screen_news(ticker)
+    except Exception as exc:
+        news = {
+            "news_status": "UNAVAILABLE",
+            "news_check_passed": False,
+            "severe_negative_news": False,
+            "news_checked_at_utc": "",
+            "news_articles_checked": 0,
+            "news_matched_headlines": [],
+            "news_reason": (
+                f"News screening failed: {type(exc).__name__}: {exc}"
+            ),
+        }
+
+    # Only an explicit CLEAR result permits the news gate to pass.
+    news_passed = (
+        news.get("news_status") == "CLEAR"
+        and news.get("news_check_passed") is True
+        and news.get("severe_negative_news") is False
+    )
+    indicators_for_strategy = dict(indicators)
+    indicators_for_strategy["news_check_passed"] = news_passed
+    indicators_for_strategy["severe_negative_news"] = (
+        news.get("severe_negative_news") is True
+    )
+
+    try:
+        signal = generate_signal(indicators_for_strategy)
     except Exception as exc:
         return failure_result(
             ticker, f"Strategy calculation failed: {exc}"
         )
+
+    evidence = signal.get("evidence", {})
+    if not isinstance(evidence, dict):
+        evidence = {"original_evidence": evidence}
+    else:
+        evidence = dict(evidence)
+
+    evidence["news_screening"] = news
 
     return {
         "ticker": ticker,
@@ -118,12 +154,15 @@ def analyze_payload(ticker, payload):
         "signal": signal.get("signal", "HOLD"),
         "reason": signal.get("reason", "No reason supplied."),
         "risk_flags": signal.get("risk_flags", []),
-        "evidence": signal.get("evidence", {}),
+        "evidence": evidence,
+        "news_status": news.get("news_status", "UNAVAILABLE"),
+        "news_check_passed": news_passed,
+        "news_articles_checked": news.get("news_articles_checked", 0),
+        "news_reason": news.get("news_reason", ""),
         "analysis_status": "OK",
         "execution_enabled": False,
         "mode": "analysis_only",
     }
-
 
 async def fetch_batch_results():
     """Start one MCP server session and request all ticker indicators."""
@@ -234,13 +273,17 @@ def save_member_reports(results, run_dir):
 
 
 def write_csv(path, results):
-    """Write a flat CSV suitable for reviewing in Excel."""
+    """Write strategy results and news screening details to CSV."""
     columns = [
         "ticker",
         "member",
         "signal",
         "reason",
         "risk_flags",
+        "news_status",
+        "news_check_passed",
+        "news_articles_checked",
+        "news_reason",
         "analysis_status",
         "execution_enabled",
         "mode",
@@ -267,12 +310,20 @@ def write_csv(path, results):
 
 
 def write_markdown(path, title, results):
-    """Write a readable summary of strategy results."""
+    """Write strategy summary including news screening status."""
     counts = {
         signal: sum(
-            result["signal"] == signal for result in results
+            result.get("signal") == signal for result in results
         )
         for signal in ("BUY", "SELL", "HOLD")
+    }
+
+    news_counts = {
+        status: sum(
+            result.get("news_status", "UNAVAILABLE") == status
+            for result in results
+        )
+        for status in ("CLEAR", "SEVERE_NEGATIVE", "UNAVAILABLE")
     }
 
     lines = [
@@ -285,53 +336,59 @@ def write_markdown(path, title, results):
         f"- BUY signals: {counts['BUY']}",
         f"- SELL signals: {counts['SELL']}",
         f"- HOLD signals: {counts['HOLD']}",
-        f"- Errors: {sum(r['analysis_status'] == 'ERROR' for r in results)}",
+        f"- Errors: {sum(r.get('analysis_status') == 'ERROR' for r in results)}",
+        f"- News CLEAR: {news_counts['CLEAR']}",
+        f"- News SEVERE_NEGATIVE: {news_counts['SEVERE_NEGATIVE']}",
+        f"- News UNAVAILABLE: {news_counts['UNAVAILABLE']}",
         "",
-        "| Ticker | Signal | Status | Reason |",
-        "|---|---|---|---|",
+        "| Ticker | Signal | Analysis status | News status | Articles checked | Reason |",
+        "|---|---|---|---|---:|---|",
     ]
 
     for result in results:
-        reason = str(result["reason"]).replace("|", "\\|").replace("\n", " ")
+        reason = str(result.get("reason", "")).replace("|", r"\|").replace("\n", " ")
+        news_reason = str(result.get("news_reason", "")).replace("|", r"\|").replace("\n", " ")
         lines.append(
-            f"| {result['ticker']} | {result['signal']} | "
-            f"{result['analysis_status']} | {reason} |"
+            f"| {result.get('ticker', '')} | "
+            f"{result.get('signal', 'HOLD')} | "
+            f"{result.get('analysis_status', 'ERROR')} | "
+            f"{result.get('news_status', 'UNAVAILABLE')} | "
+            f"{result.get('news_articles_checked', 0)} | "
+            f"{reason} "
+            f"{'? News: ' + news_reason if news_reason else ''} |"
         )
 
-    lines.extend(["", "## Indicator evidence", ""])
+    lines.extend(["", "## Indicator and news evidence", ""])
 
     for result in results:
-        lines.append(f"### {result['ticker']}")
+        lines.append(f"### {result.get('ticker', 'Unknown')}")
         lines.append("")
         lines.append(
-            f"- Assigned member: {result['member']}"
+            f"- Assigned member: {result.get('member', 'Unassigned')}"
         )
         lines.append(
-            f"- Risk flags: {', '.join(result['risk_flags']) or 'None'}"
+            f"- Risk flags: {', '.join(result.get('risk_flags', [])) or 'None'}"
         )
+        lines.append(
+            f"- News status: {result.get('news_status', 'UNAVAILABLE')}"
+        )
+        lines.append(
+            f"- News gate passed: {result.get('news_check_passed', False)}"
+        )
+        lines.append(
+            f"- News articles checked: {result.get('news_articles_checked', 0)}"
+        )
+        if result.get("news_reason"):
+            lines.append(f"- News screening reason: {result['news_reason']}")
 
         evidence = result.get("evidence", {})
         if evidence:
             for key, value in evidence.items():
                 lines.append(f"- {key}: {value}")
-        else:
-            lines.append("- No indicator evidence available.")
 
         lines.append("")
 
-    lines.extend([
-        "## Important limitations",
-        "",
-        "- These are research signals, not orders.",
-        "- A HOLD assigned after an analysis error does not mean "
-        "the stock was successfully analyzed.",
-        "- No orders were submitted by this runner.",
-        "- Signals do not guarantee future performance.",
-        "",
-    ])
-
     path.write_text("\n".join(lines), encoding="utf-8")
-
 
 async def main():
     validate_universe()

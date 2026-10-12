@@ -1,118 +1,61 @@
 
-import asyncio
 import json
-from pathlib import Path
+import unittest
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
-TICKERS = [
-    "SNDK", "AMD", "APP", "MRNA", "GOOGL", "AMZN",
-    "JPM", "LLY", "META", "XOM", "PEP", "ABT",
-    "SMCI", "MU", "MRVL", "WDC", "MSFT", "ETN",
-    "GS", "ISRG", "CAT", "FCX", "PG", "CVX",
-    "HOOD", "COIN", "PLTR", "LITE", "TSLA", "AAPL",
-    "NFLX", "GE", "AXP", "UNH", "DIS", "ABBV"
-]
+from mcp_strategy_client import analyze_mcp_text
 
 
-async def call_and_print(session, name, arguments):
-    result = await session.call_tool(name, arguments)
-
-    if result.isError:
-        raise RuntimeError(f"{name} returned an MCP error")
-
-    text_items = [
-        item.text for item in result.content
-        if hasattr(item, "text")
-    ]
-
-    if not text_items:
-        raise ValueError(f"{name} returned no text")
-
-    payload = json.loads(text_items[0])
-
-    if isinstance(payload, dict) and payload.get("error"):
-        raise ValueError(str(payload["error"]))
-
-    print(f"PASS {name}")
-    print(json.dumps(payload, indent=2)[:1200])
-    return payload
+def bullish_indicators():
+    return {
+        "close": 110.0,
+        "EMA_20": 108.0,
+        "EMA_50": 104.0,
+        "RSI_14": 60.0,
+        "MACD": 2.0,
+        "MACD_Signal": 1.5,
+        "MACD_Histogram": 0.5,
+        "ATR_14": 2.0,
+        "RS_20D_vs_SPY": 0.05,
+        "ADX_14": 30.0,
+        "PLUS_DI_14": 35.0,
+        "MINUS_DI_14": 15.0,
+        "Volume_Ratio_5_20": 1.5,
+        "Price_Change_1D": 0.02,
+        "news_check_passed": True,
+        "severe_negative_news": False,
+    }
 
 
-async def main():
-    root = Path(__file__).resolve().parent
-    server = StdioServerParameters(
-        command="python",
-        args=[str(root / "technical_indicators_mcp_server.py")],
-        cwd=str(root),
-    )
+class MCPStrategyClientTests(unittest.TestCase):
+    def test_valid_indicator_response_generates_buy(self):
+        response = json.dumps({
+            "ticker": "AMD",
+            "latest_indicators": bullish_indicators(),
+        })
 
-    async with stdio_client(server) as (read_stream, write_stream):
-        async with ClientSession(read_stream, write_stream) as session:
-            await session.initialize()
+        result = analyze_mcp_text(response)
 
-            tools_result = await session.list_tools()
-            tool_names = {tool.name for tool in tools_result.tools}
+        self.assertEqual(result["ticker"], "AMD")
+        self.assertEqual(result["signal"], "BUY")
 
-            required = {
-                "get_account_summary",
-                "get_stock_bars",
-                "calculate_stock_indicators",
-                "validate_local_stock_data",
-            }
+    def test_mcp_error_fails_safe_to_hold(self):
+        response = json.dumps({
+            "ticker": "AMD",
+            "error": "Synthetic test error",
+        })
 
-            print("MCP connection: PASS")
-            print("Registered tools:", ", ".join(sorted(tool_names)))
+        result = analyze_mcp_text(response)
 
-            missing = required - tool_names
-            if missing:
-                raise RuntimeError(f"Missing MCP tools: {sorted(missing)}")
+        self.assertEqual(result["signal"], "HOLD")
+        self.assertTrue(result["risk_flags"])
 
-            print("\n========== FOUR-TOOL TEST ==========")
-            tests = [
-                ("get_account_summary", {}),
-                ("get_stock_bars", {"tickers": ["AMD"], "days": 5}),
-                ("validate_local_stock_data", {"ticker": "AMD"}),
-                ("calculate_stock_indicators", {"ticker": "AMD"}),
-            ]
+    def test_invalid_json_fails_safe_to_hold(self):
+        result = analyze_mcp_text("not valid JSON")
 
-            tool_failures = []
-
-            for name, arguments in tests:
-                try:
-                    await call_and_print(session, name, arguments)
-                except Exception as error:
-                    tool_failures.append((name, str(error)))
-                    print(f"FAIL {name}: {error}")
-
-            print("\n========== 36-STOCK INDICATOR TEST ==========")
-            passed = []
-            failed = []
-
-            for ticker in TICKERS:
-                try:
-                    await call_and_print(
-                        session,
-                        "calculate_stock_indicators",
-                        {"ticker": ticker},
-                    )
-                    passed.append(ticker)
-                except Exception as error:
-                    failed.append((ticker, str(error)))
-                    print(f"FAIL {ticker}: {error}")
-
-            print("\n========== FINAL SUMMARY ==========")
-            print(f"Four-tool tests passed: {len(tests) - len(tool_failures)}/4")
-            print(f"Four-tool tests failed: {len(tool_failures)}")
-            print(f"36-stock indicator tests passed: {len(passed)}/36")
-            print(f"36-stock indicator tests failed: {len(failed)}")
-
-            if tool_failures:
-                print("Tool failures:", tool_failures)
-            if failed:
-                print("Stock failures:", failed)
+        self.assertEqual(result["signal"], "HOLD")
+        self.assertEqual(result["reason"], "MCP response is not valid JSON.")
+        self.assertIn("Invalid JSON response", result["risk_flags"])
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    unittest.main(verbosity=2)
