@@ -2,3 +2,5 @@ crewai==1.15.27
 mcp==1.28.1
 alpaca-py==0.44.0
 pandas==3.0.6
+
+tabulate
