@@ -1,0 +1,14 @@
+
+# Private Alpaca API credentials — NEVER COMMIT
+alpaca_credentials.py
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
