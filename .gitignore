@@ -24,3 +24,5 @@ reports/
 
 # Local virtual environments and editor settings
 .vscode/
+# Local diagnostic logs
+mcp_stderr.log
