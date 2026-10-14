@@ -1,10 +1,14 @@
-﻿import unittest
+import unittest
 
 TEST_MODULES = [
     "test_mcp_client",
     "test_mcp_strategy_client",
     "test_news_gate",
+    "test_team_portfolio_snapshot",
     "test_portfolio_risk",
+    "test_team_portfolio_risk",
+    "test_team_accounts",
+    "test_runner_risk_gate",
     "test_strategy_agent",
     "test_strategy_integration",
     "test_strategy_workflow",

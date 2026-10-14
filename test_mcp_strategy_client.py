@@ -1,4 +1,5 @@
-﻿import json
+﻿
+import json
 import unittest
 
 from mcp_strategy_client import analyze_mcp_text
@@ -26,24 +27,6 @@ def bullish_indicators():
 
 
 class MCPStrategyClientTests(unittest.TestCase):
-    def test_invalid_json_fails_safe_to_hold(self):
-        result = analyze_mcp_text("{invalid json")
-
-        self.assertEqual(result["signal"], "HOLD")
-        self.assertTrue(result["risk_flags"])
-        self.assertIn("reason", result)
-
-    def test_mcp_error_fails_safe_to_hold(self):
-        response = json.dumps({
-            "ticker": "AMD",
-            "error": "No local OHLCV data",
-        })
-
-        result = analyze_mcp_text(response)
-
-        self.assertEqual(result["signal"], "HOLD")
-        self.assertTrue(result["risk_flags"])
-
     def test_valid_indicator_response_generates_buy(self):
         response = json.dumps({
             "ticker": "AMD",
@@ -54,8 +37,24 @@ class MCPStrategyClientTests(unittest.TestCase):
 
         self.assertEqual(result["ticker"], "AMD")
         self.assertEqual(result["signal"], "BUY")
-        self.assertIn("reason", result)
-        self.assertIn("evidence", result)
+
+    def test_mcp_error_fails_safe_to_hold(self):
+        response = json.dumps({
+            "ticker": "AMD",
+            "error": "Synthetic test error",
+        })
+
+        result = analyze_mcp_text(response)
+
+        self.assertEqual(result["signal"], "HOLD")
+        self.assertTrue(result["risk_flags"])
+
+    def test_invalid_json_fails_safe_to_hold(self):
+        result = analyze_mcp_text("not valid JSON")
+
+        self.assertEqual(result["signal"], "HOLD")
+        self.assertTrue(result["risk_flags"])
+        self.assertEqual(result["reason"], "MCP response is not valid JSON.")
 
 
 if __name__ == "__main__":

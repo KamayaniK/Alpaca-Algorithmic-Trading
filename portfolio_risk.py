@@ -160,8 +160,6 @@ def validate_portfolio(
             f"the ${MAX_AI_HARDWARE_EXPOSURE:,.2f} limit."
         )
 
-    if not normalized:
-        warnings.append("No valid positions were supplied.")
 
     metrics = {
         "account_value": float(account_value),

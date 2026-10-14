@@ -137,6 +137,9 @@ def generate_signal(
         "ATR_pct": round(atr_pct, 4),
     }
 
+    # Preserve the source bar timestamp for report freshness checks.
+    if indicators.get("timestamp") is not None:
+        evidence["timestamp"] = str(indicators["timestamp"])
     if atr_pct > max_atr_pct:
         return _hold(
             "Volatility exceeds the configured threshold.",
@@ -152,16 +155,36 @@ def generate_signal(
     else:
         trend_score = 0.0
 
-    # 2. MACD: use the histogram's sign.
-    # A previous histogram value is not currently supplied by the MCP tool,
-    # so this does not claim to measure whether the histogram is rising.
+
+    # 2. MACD: score the histogram's sign and measure its direction.
     histogram = values["MACD_Histogram"]
+    previous_histogram_raw = indicators.get("MACD_Histogram_Previous")
+    previous_histogram = None
+    histogram_direction_confirmed = False
+
     if histogram > 0:
         macd_score = 1.0
     elif histogram < 0:
         macd_score = -1.0
     else:
         macd_score = 0.0
+
+    if previous_histogram_raw is None:
+        histogram_direction = "UNKNOWN"
+    else:
+        try:
+            previous_histogram = float(previous_histogram_raw)
+        except (TypeError, ValueError, OverflowError):
+            previous_histogram = None
+            histogram_direction = "UNKNOWN"
+        else:
+            histogram_direction_confirmed = isfinite(previous_histogram)
+            if histogram > previous_histogram:
+                histogram_direction = "RISING"
+            elif histogram < previous_histogram:
+                histogram_direction = "FALLING"
+            else:
+                histogram_direction = "UNCHANGED"
 
     # 3. Relative strength: 20-day stock return minus 20-day SPY return.
     relative_strength = values["RS_20D_vs_SPY"]
@@ -217,17 +240,22 @@ def generate_signal(
         for name, score in component_scores.items()
     )
 
+
     evidence.update({
         "component_scores": component_scores,
         "weights": WEIGHTS.copy(),
         "weighted_score": round(weighted_score, 4),
         "news_check_passed": indicators.get("news_check_passed") is True,
-        "macd_histogram_direction_confirmed": False,
-    })
+        "MACD_Histogram_Previous": previous_histogram,
+        "macd_histogram_direction": histogram_direction,
+        "macd_histogram_direction_confirmed": histogram_direction_confirmed,
+})
 
-    risk_flags: list[str] = [
-        "MACD histogram direction unavailable; only its current sign was scored."
-    ]
+    risk_flags: list[str] = []
+    if not histogram_direction_confirmed:
+        risk_flags.append(
+            "MACD histogram direction unavailable; only its current sign was scored."
+        )
 
     # Assignment requires bullish trend confirmation for BUY.
     bullish_trend_confirmed = (

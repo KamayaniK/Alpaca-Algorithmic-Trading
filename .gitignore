@@ -26,3 +26,18 @@ reports/
 .vscode/
 # Local diagnostic logs
 mcp_stderr.log
+
+# Local staging data and backups — do not upload
+adjusted_data_staging_*/
+backups/
+*.bak
+*.before_*
+*.review.txt
+
+# Account credentials and local generated artifacts
+team_accounts.py
+adjusted_data_staging_*/
+backups/
+*.bak
+*.before_*
+*.review.txt

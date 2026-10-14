@@ -19,6 +19,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from trading_strategy import generate_signal
+from portfolio_risk import validate_signals
 
 
 ROOT = Path(__file__).resolve().parent
@@ -135,6 +136,12 @@ def analyze_payload(ticker, payload):
 
     try:
         signal = generate_signal(indicators_for_strategy)
+        validation = validate_signals({ticker: signal.get('signal', 'HOLD')})
+        if not validation.passed:
+            return failure_result(
+                ticker,
+                'Signal validation failed: ' + '; '.join(validation.errors),
+            )
     except Exception as exc:
         return failure_result(
             ticker, f"Strategy calculation failed: {exc}"
@@ -166,14 +173,17 @@ def analyze_payload(ticker, payload):
 
 async def fetch_batch_results():
     """Start one MCP server session and request all ticker indicators."""
-    api_key = os.environ.get("ALPACA_API_KEY")
-    secret_key = os.environ.get("ALPACA_SECRET_KEY")
+    api_key = os.environ.get("MARKET_DATA_ALPACA_API_KEY")
+    secret_key = os.environ.get("MARKET_DATA_ALPACA_SECRET_KEY")
+
 
     if not api_key or not secret_key:
         raise RuntimeError(
-            "Alpaca credentials are missing from the environment. "
-            "Set ALPACA_API_KEY and ALPACA_SECRET_KEY in PowerShell."
+            "Market-data credentials are missing. Set "
+            "MARKET_DATA_ALPACA_API_KEY and "
+            "MARKET_DATA_ALPACA_SECRET_KEY."
         )
+
 
     server_params = StdioServerParameters(
         command=sys.executable,

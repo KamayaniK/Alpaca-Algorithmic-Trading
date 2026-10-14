@@ -1,4 +1,4 @@
-
+from alpaca_credentials import ALPACA_API_KEY, ALPACA_SECRET_KEY
 from datetime import datetime, timedelta, timezone
 import json
 import math
@@ -212,7 +212,7 @@ def analyze_frame(
     frame: pd.DataFrame,
     spy_frame: pd.DataFrame | None = None,
 ) -> dict:
-    """Calculate indicators, including SPY-relative strength when available."""
+    """Calculate indicators and include the previous MACD histogram."""
     if frame.empty:
         return {
             "ticker": ticker,
@@ -227,13 +227,27 @@ def analyze_frame(
             "error": "No indicator rows produced.",
         }
 
-    latest = indicators.tail(1).iloc[0].to_dict()
+    # Use the last two rows with valid MACD histogram values.
+    valid_histograms = indicators.loc[
+        pd.to_numeric(
+            indicators["MACD_Histogram"], errors="coerce"
+        ).map(lambda value: pd.notna(value) and math.isfinite(float(value)))
+    ]
+
+    latest = indicators.iloc[-1].to_dict()
+
+    previous_histogram = None
+    if len(valid_histograms) >= 2 and valid_histograms.index[-1] == indicators.index[-1]:
+        previous_histogram = valid_histograms.iloc[-2]["MACD_Histogram"]
+
+    latest["MACD_Histogram_Previous"] = json_safe(previous_histogram)
 
     return {
         "ticker": ticker,
         "bars_used": len(indicators),
         "latest_indicators": json_safe(latest),
     }
+
 
 @mcp.tool()
 def get_account_summary() -> str:

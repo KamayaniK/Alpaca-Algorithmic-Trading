@@ -1,4 +1,5 @@
-﻿"""Conservative Alpaca news screening for research signals.
+﻿
+"""Conservative Alpaca news screening for research signals.
 
 Keyword-based first-pass screening, not a validated sentiment model.
 Never places orders. API errors and inconclusive results fail closed.
@@ -31,6 +32,7 @@ SEVERE_NEGATIVE_PATTERNS = [
     r"\bdefault(?:s|ed)? on (?:its )?debt\b",
     r"\bchapter 11\b",
 ]
+
 COMPILED_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in SEVERE_NEGATIVE_PATTERNS
@@ -64,19 +66,24 @@ def _extract_articles(response):
             articles = data.get("news")
             if isinstance(articles, (list, tuple)):
                 return list(articles)
+
         articles = response.get("news")
         if isinstance(articles, (list, tuple)):
             return list(articles)
+
         if isinstance(data, (list, tuple)):
             return list(data)
+
         return None
 
     data = getattr(response, "data", None)
+
     if isinstance(data, dict):
         articles = data.get("news")
         if isinstance(articles, (list, tuple)):
             return list(articles)
         return None
+
     if isinstance(data, (list, tuple)):
         return list(data)
 
@@ -90,7 +97,7 @@ def _field(article, name, default=""):
 
 
 def screen_news(ticker, *, lookback_hours=72, limit=50):
-    """Screen recent news for one ticker; fail closed if screening is inconclusive."""
+    """Screen recent news for one ticker; fail closed if inconclusive."""
     now = datetime.now(timezone.utc)
     checked_at = now.isoformat()
 
@@ -116,14 +123,16 @@ def screen_news(ticker, *, lookback_hours=72, limit=50):
         )
 
     ticker = ticker.strip().upper()
-    api_key = os.environ.get("ALPACA_API_KEY")
-    secret_key = os.environ.get("ALPACA_SECRET_KEY")
+
+    # Shared market-data/news credentials; never fall back to a team account.
+    api_key = os.environ.get("MARKET_DATA_ALPACA_API_KEY")
+    secret_key = os.environ.get("MARKET_DATA_ALPACA_SECRET_KEY")
 
     if not api_key or not secret_key:
         return _result(
             "UNAVAILABLE",
             checked_at=checked_at,
-            reason="Alpaca API credentials are not configured.",
+            reason="Market-data credentials are not configured.",
         )
 
     try:
@@ -136,6 +145,7 @@ def screen_news(ticker, *, lookback_hours=72, limit=50):
             sort="desc",
             include_content=False,
         )
+
         response = client.get_news(request)
         articles = _extract_articles(response)
 
@@ -154,6 +164,7 @@ def screen_news(ticker, *, lookback_hours=72, limit=50):
             )
 
         matched = []
+
         for article in articles:
             headline = str(_field(article, "headline", "") or "")
             summary = str(_field(article, "summary", "") or "")
@@ -170,7 +181,9 @@ def screen_news(ticker, *, lookback_hours=72, limit=50):
                     {
                         "headline": headline,
                         "url": str(_field(article, "url", "") or ""),
-                        "created_at": str(_field(article, "created_at", "") or ""),
+                        "created_at": str(
+                            _field(article, "created_at", "") or ""
+                        ),
                         "matched_rules": rules,
                     }
                 )
@@ -181,7 +194,10 @@ def screen_news(ticker, *, lookback_hours=72, limit=50):
                 checked_at=checked_at,
                 articles_checked=len(articles),
                 matched_headlines=matched,
-                reason="One or more articles matched a severe-negative keyword rule.",
+                reason=(
+                    "One or more articles matched a severe-negative "
+                    "keyword rule."
+                ),
             )
 
         return _result(

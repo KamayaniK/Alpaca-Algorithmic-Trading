@@ -1,7 +1,7 @@
 ﻿
 """MCP-to-strategy integration helpers.
 
-This module generates research signals only and never submits orders.
+Generates research signals only. Never submits, modifies, or cancels orders.
 """
 
 import json
@@ -29,6 +29,7 @@ def _hold(
         "reason": reason,
         "risk_flags": risk_flags or [],
         "evidence": {},
+        "execution_enabled": False,
     }
 
 
@@ -57,11 +58,13 @@ def analyze_mcp_text(response_text: str) -> dict[str, Any]:
             ["Invalid signal"],
         )
 
+    # This client produces research only, regardless of the signal.
+    result["execution_enabled"] = False
     return result
 
 
 async def get_signal_from_mcp(ticker: str) -> dict[str, Any]:
-    """Request indicator data from MCP and return a research signal."""
+    """Fetch indicators through MCP and return a research signal."""
     ticker = ticker.strip().upper() if isinstance(ticker, str) else ""
 
     if not ticker:
@@ -74,29 +77,33 @@ async def get_signal_from_mcp(ticker: str) -> dict[str, Any]:
             ["MCP server missing"],
         )
 
-    api_key = os.environ.get("ALPACA_API_KEY")
-    secret_key = os.environ.get("ALPACA_SECRET_KEY")
+    # Use the dedicated shared market-data credentials.
+    api_key = os.environ.get("MARKET_DATA_ALPACA_API_KEY")
+    secret_key = os.environ.get("MARKET_DATA_ALPACA_SECRET_KEY")
 
     if not api_key or not secret_key:
         return _hold(
             ticker,
-            "Alpaca credentials are missing from environment variables.",
-            ["Missing Alpaca credentials"],
+            "Shared market-data credentials are missing from environment variables.",
+            ["Missing market-data credentials"],
         )
 
     try:
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
+        # The MCP server's credential loader expects these variable names.
+        server_env = {
+            **os.environ,
+            "ALPACA_API_KEY": api_key,
+            "ALPACA_SECRET_KEY": secret_key,
+        }
+
         server_params = StdioServerParameters(
             command=sys.executable,
             args=[str(SERVER_SCRIPT)],
             cwd=str(PROJECT_ROOT),
-            env={
-                **os.environ,
-                "ALPACA_API_KEY": api_key,
-                "ALPACA_SECRET_KEY": secret_key,
-            },
+            env=server_env,
         )
 
         async with stdio_client(server_params) as (
@@ -146,6 +153,7 @@ async def get_signal_from_mcp(ticker: str) -> dict[str, Any]:
 
                 output = analyze_mcp_text(response_text)
                 output.setdefault("ticker", ticker)
+                output["execution_enabled"] = False
                 return output
 
     except Exception as exc:
